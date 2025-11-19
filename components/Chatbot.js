@@ -1,40 +1,46 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import styles from '../styles/Chatbot.module.css';
-import supabase from '../utils/supabaseClient';
 
 export default function Chatbot() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef(null);
 
-  async function saveGoalToSupabase(goalDescription, goalAmount, targetDate) {
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  function saveGoalToStorage(goalDescription, goalAmount, targetDate) {
     try {
-      const { data, error } = await supabase.from('goals').insert([
-        {
-          description: goalDescription,
-          amount: goalAmount,
-          target_date: targetDate,
-          created_at: new Date(),
-        },
-      ]);
-
-      if (error) {
-        console.error('Error saving goal to Supabase:', error);
-        return { success: false, error };
-      }
-
-      return { success: true, data };
+      const goals = JSON.parse(localStorage.getItem('goals') || '[]');
+      const newGoal = {
+        id: Date.now(),
+        description: goalDescription,
+        amount: goalAmount,
+        target_date: targetDate,
+        created_at: new Date().toISOString(),
+      };
+      goals.push(newGoal);
+      localStorage.setItem('goals', JSON.stringify(goals));
+      return { success: true, data: newGoal };
     } catch (err) {
-      console.error('Unexpected error:', err);
+      console.error('Error saving goal:', err);
       return { success: false, error: err };
     }
   }
 
   const sendMessage = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() || isLoading) return;
 
     const userMessage = { sender: 'user', text: input };
-    setMessages([...messages, userMessage]);
+    setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setIsLoading(true);
 
     try {
       const response = await fetch('/api/chat', {
@@ -45,23 +51,24 @@ export default function Chatbot() {
 
       const data = await response.json();
       const botMessage = { sender: 'bot', text: data.reply };
-      setMessages([...messages, userMessage, botMessage]);
+      setMessages(prev => [...prev, botMessage]);
 
-      // Example: Parse goal from user message and save it
-      if (input.includes('save')) {
-        const goalDescription = 'Save for school fees'; // Example parsing logic
-        const goalAmount = 5000; // Example parsing logic
+      if (input.toLowerCase().includes('save')) {
+        const goalDescription = 'Save for school fees';
+        const goalAmount = 5000;
         const targetDate = new Date(new Date().setMonth(new Date().getMonth() + 3));
-        await handleSaveGoal(goalDescription, goalAmount, targetDate);
+        handleSaveGoal(goalDescription, goalAmount, targetDate);
       }
     } catch (error) {
       const errorMessage = { sender: 'bot', text: 'Oops! Something went wrong. Please try again.' };
-      setMessages([...messages, userMessage, errorMessage]);
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleSaveGoal = async (goalDescription, goalAmount, targetDate) => {
-    const result = await saveGoalToSupabase(goalDescription, goalAmount, targetDate);
+  const handleSaveGoal = (goalDescription, goalAmount, targetDate) => {
+    const result = saveGoalToStorage(goalDescription, goalAmount, targetDate);
     if (result.success) {
       console.log('Goal saved successfully:', result.data);
     } else {
@@ -69,26 +76,84 @@ export default function Chatbot() {
     }
   };
 
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
   return (
     <div className={styles.chatbotContainer}>
+      <header className={styles.header}>
+        <h1 className={styles.headerTitle}>OldMoney Bot</h1>
+        <p className={styles.headerSubtitle}>Your personal savings assistant</p>
+      </header>
+
       <div className={styles.messagesContainer}>
-        {messages.map((msg, index) => (
-          <div
-            key={index}
-            className={msg.sender === 'user' ? styles.userMessage : styles.botMessage}
-          >
-            {msg.text}
+        {messages.length === 0 ? (
+          <div className={styles.emptyState}>
+            <div className={styles.emptyIcon}>N$</div>
+            <h2 className={styles.emptyTitle}>Welcome to OldMoney Bot</h2>
+            <p className={styles.emptyText}>
+              Start a conversation to get personalized savings advice and set your financial goals.
+            </p>
           </div>
-        ))}
+        ) : (
+          <>
+            {messages.map((msg, index) => (
+              <div
+                key={index}
+                className={`${styles.messageWrapper} ${
+                  msg.sender === 'user' ? styles.userWrapper : styles.botWrapper
+                }`}
+              >
+                <div className={`${styles.avatar} ${
+                  msg.sender === 'user' ? styles.userAvatar : styles.botAvatar
+                }`}>
+                  {msg.sender === 'user' ? 'U' : 'O'}
+                </div>
+                <div
+                  className={msg.sender === 'user' ? styles.userMessage : styles.botMessage}
+                >
+                  {msg.text}
+                </div>
+              </div>
+            ))}
+            {isLoading && (
+              <div className={`${styles.messageWrapper} ${styles.botWrapper}`}>
+                <div className={`${styles.avatar} ${styles.botAvatar}`}>O</div>
+                <div className={styles.botMessage}>
+                  <div className={styles.typing}>
+                    <span className={styles.typingDot}></span>
+                    <span className={styles.typingDot}></span>
+                    <span className={styles.typingDot}></span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        <div ref={messagesEndRef} />
       </div>
+
       <div className={styles.inputContainer}>
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onKeyPress={handleKeyPress}
           placeholder="Type your message..."
+          className={styles.input}
+          disabled={isLoading}
         />
-        <button onClick={sendMessage}>Send</button>
+        <button
+          onClick={sendMessage}
+          className={styles.button}
+          disabled={isLoading || !input.trim()}
+        >
+          Send
+        </button>
       </div>
     </div>
   );
